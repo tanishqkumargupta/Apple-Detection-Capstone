@@ -1,148 +1,472 @@
-# Apple Detection, Counting, and Ripeness Classification
+# Apple Detection, Counting and Ripeness Classification Using Deep Learning
 
-A modular deep-learning framework that detects individual apples in orchard imagery, classifies each detected apple as **raw / ripe / rotten**, and includes supporting analyses for apple counting, orchard maturity classification, and cross-domain generalization.
+A modular deep-learning framework for apple detection, counting, ripeness classification, orchard maturity analysis, and cross-domain evaluation in agricultural computer vision.
+
+The project combines **YOLO11n** for apple detection with **ResNet50** for raw/ripe/rotten classification. An **EfficientNet-B0** model is additionally evaluated under matched training conditions. Separate experiments investigate orchard maturity classification and detector transfer across orchard datasets.
 
 This repository accompanies the paper *"A Modular Deep Learning Framework for Apple Detection and Ripeness Classification, with Supporting Counting and Cross-Domain Generalization Evaluations"* (Patel, Gupta, Patil, Parmar, Agrawal, Pathak).
 
+> **Note:** This repository contains the implementation code, trained model checkpoints, configuration files, and representative test images. The original datasets and generated experimental result files are **not** included.
+
 ## Overview
 
-Most published systems evaluate fruit detection, counting, and ripeness/maturity classification separately, each on a dataset built for that one task — leaving cross-dataset transferability largely unexamined. This project builds a **core pipeline** (detection → classification) and then probes its reach with three supporting experiments:
+Automated apple analysis in orchard environments is challenging because of:
 
-1. **Apple detection** — YOLO11n trained on MinneApple
-2. **Ripeness classification** — ResNet50 (and a comparative EfficientNet-B0) trained on a fruit-level raw/ripe/rotten dataset
-3. **Apple counting** — derived directly from detector output, no extra model
-4. **Orchard maturity classification** — an independently trained ResNet50 on a separate, pixel-level annotated orchard dataset (immature / semi-mature / mature)
-5. **Cross-domain detector transfer** — the MinneApple-trained detector applied, without retraining, to the orchard maturity dataset, to test generalization across orchard-imagery sources
+- Dense fruit clusters
+- Partial occlusion by leaves and branches
+- Variable illumination
+- Small or distant apples
+- Background clutter
+- Differences between orchard datasets and acquisition conditions
+
+This project investigates a modular framework consisting of:
+
+1. Apple detection using YOLO11n
+2. Apple counting derived directly from detector outputs
+3. Raw/Ripe/Rotten classification using ResNet50
+4. ResNet50 vs. EfficientNet-B0 comparison
+5. Orchard apple maturity classification
+6. Cross-domain detector-transfer evaluation
+7. Qualitative end-to-end detection-to-ripeness inference
+
+The experiments use separate datasets for detection, fruit-level ripeness classification, and orchard maturity classification — they are reported independently rather than as a single unified benchmark.
+
+## System Architecture
+
+### Core Detection and Ripeness Pipeline
 
 ```
-Apple Image → YOLO11n Detection → Crop Detected Apples → ResNet50 Classification → Raw / Ripe / Rotten
-                     │
-                     └──► Apple Counting (from detections)
-
-Orchard Images → ResNet50 (independently trained) → Immature / Semi-mature / Mature
-
-MinneApple-trained YOLO11n (no retraining) → applied to Orchard Images → Cross-Domain Transfer Evaluation
+                 Input Orchard Image
+                         │
+                         ▼
+                   YOLO11n Detector
+                         │
+                         ▼
+                Apple Bounding Boxes
+                    │           │
+                    │           └──────────► Apple Count
+                    │
+                    ▼
+              Apple Crop Extraction
+                         │
+                         ▼
+                    ResNet50
+                         │
+                ┌────────┼────────┐
+                ▼        ▼        ▼
+              Raw      Ripe     Rotten
 ```
 
-## Key Results
+### Orchard Maturity Experiment
 
-| Component | Dataset | Model | Metric | Result |
-|---|---|---|---|---|
-| Detection (core) | MinneApple | YOLO11n | mAP@50 | 84.7% |
-| Detection (core) | MinneApple | YOLO11n | Precision / Recall | 84.8% / 75.7% |
-| Ripeness classification (core) | Fruit Ripeness | ResNet50 | Accuracy | 99.93% |
-| Ripeness classification (core) | Fruit Ripeness | EfficientNet-B0 | Accuracy | 99.93% |
-| Counting (supporting) | MinneApple | YOLO11n-derived | Counting accuracy | 89.24% (MAE 4.54, RMSE 6.48) |
-| Maturity classification (supporting) | Multi-Stage orchard dataset | ResNet50 | Accuracy | 88.48% |
-| Cross-domain detection (supporting) | Multi-Stage orchard dataset (transfer) | YOLO11n (MinneApple weights) | Precision / Recall / F1 | 2.08% / 1.23% / 1.54% |
+```
+          Orchard Apple Image
+                  │
+                  ▼
+         Apple Region Extraction
+                  │
+                  ▼
+               ResNet50
+                  │
+        ┌─────────┼──────────┐
+        ▼         ▼          ▼
+    Immature  Semi-mature   Mature
+```
 
-The datasets are non-overlapping and evaluated separately — this table summarizes independently obtained results, not a single unified benchmark.
+### Cross-Domain Detector Evaluation
 
-**Headline finding:** strong in-domain detection performance (84.7% mAP@50 on MinneApple) does not transfer across orchard-imagery sources — applying the same detector, unmodified, to a second orchard dataset collapses performance to 1.54% F1-score. Domain compatibility needs explicit evaluation when composing agricultural computer-vision pipelines from independently trained models.
+```
+MinneApple-trained YOLO11n
+             │
+             │ No retraining
+             ▼
+   Multi-Stage Orchard Dataset
+             │
+             ▼
+    Detection Transfer Analysis
+```
 
-## Datasets
-
-| Dataset | Role | Size | Classes | Annotation | Source |
-|---|---|---|---|---|---|
-| **MinneApple** | Core detection + counting | 670 images / 5,660 val. instances | 1 (apple) | Instance masks → bounding boxes | [University of Minnesota Data Repository](https://doi.org/10.13020/8ecp-3r13) |
-| **Fruit Ripeness (apple subset)** | Core ripeness classification | 7,336 images | 3 (raw / ripe / rotten) | Folder-based labels | [Kaggle](https://www.kaggle.com/) — "Fruit Ripeness: Unripe, Ripe, and Rotten" |
-| **Multi-Stage Apple Dataset** | Supporting: maturity classification + cross-domain detection | 2,574 instances | 3 (immature / semi-mature / mature) | Pixel-level polygon (VIA format) | [Mendeley Data](https://doi.org/10.17632/gfcmdbvw65.4) |
-
-Datasets are not redistributed in this repository — download from the sources above and place them under `data/` (see `data/README.md` for expected structure).
-
-## Pipeline Details
-
-### 1. Detection — YOLO11n
-- Input size: 640×640, batch size 16, 50 epochs, single class (`apple`)
-- Trained on MinneApple (536 train / 134 val images) on an NVIDIA Tesla T4
-- Confidence threshold: 0.25
-- Best checkpoint by validation mAP@50: `apple_detection_best.pt`
-
-### 2. Ripeness Classification — ResNet50 / EfficientNet-B0
-- ImageNet-pretrained backbones, final layer replaced with a 3-way head (raw / ripe / rotten)
-- Input 224×224, batch size 32, 20 epochs, AdamW (lr 1e-4, weight decay 1e-4)
-- Augmentation (train only): horizontal flip, ±10° rotation, brightness/contrast/saturation jitter
-- Best checkpoint by validation accuracy: `resnet50_best.pth`
-
-### 3. Apple Counting
-- Count = number of retained detections per image (confidence ≥ 0.25)
-- No additional regression model — evaluated with MAE, RMSE, and a normalized counting-accuracy metric
-
-### 4. Orchard Maturity Classification
-- Independently trained ResNet50 on the Multi-Stage dataset's polygon-cropped apple regions
-- Separate label space (immature / semi-mature / mature); not part of the core pipeline
-- Best checkpoint: `orchard_maturity_resnet50_best.pth`
-
-### 5. Cross-Domain Detection Evaluation
-- The MinneApple-trained detector (unmodified) is run on the Multi-Stage dataset's 239 test images
-- Matching by IoU ≥ 0.50 against ground-truth polygon boxes
-- Exploratory only — quantifies detector transfer, not a general detector benchmark
-
-### 6. End-to-End Demonstration
-- YOLO11n detection → crop extraction → ResNet50 ripeness classification, run sequentially on a representative MinneApple image
-- Qualitative only: no dataset in this study provides ground-truth ripeness labels for individually detected MinneApple apples, so no end-to-end accuracy is reported
+The detection and ripeness models were trained on different datasets. Therefore, the combined detection-to-ripeness pipeline is demonstrated **qualitatively** rather than evaluated with a quantitative end-to-end accuracy metric.
 
 ## Repository Structure
 
 ```
-.
-├── Capstone.ipynb          # End-to-end notebook: setup, detection, classification, counting,
-│                           # maturity classification, cross-domain evaluation, demo pipeline
-├── data/                   # (not included) place downloaded datasets here
-├── models/                 # (not included) trained checkpoints
+Apple_Detection_Capstone/
+│
+├── models/
 │   ├── apple_detection_best.pt
-│   ├── resnet50_best.pth
+│   ├── apple_detection_last.pt
 │   ├── efficientnet_b0_best.pth
-│   └── orchard_maturity_resnet50_best.pth
+│   ├── orchard_maturity_resnet50_best.pth
+│   ├── orchard_maturity_resnet50_last.pth
+│   ├── resnet50_best.pth
+│   └── resnet50_last.pth
+│
+├── scripts/
+│   ├── convert_to_yolo.py
+│   ├── create_orchard_maturity_dataset.py
+│   ├── create_ripeness_dataset.py
+│   ├── evaluate_orchard_maturity.py
+│   ├── inspect_masks.py
+│   ├── train_orchard_maturity.py
+│   ├── validate_masks.py
+│   ├── visualize_orchard_maturity.py
+│   └── visualize_yolo.py
+│
+├── src/
+│   ├── classification.py
+│   ├── classification_evaluation.py
+│   ├── crop_diagnostic.py
+│   ├── debug_orchard_detection.py
+│   ├── detection.py
+│   ├── evaluate_orchard_detection.py
+│   ├── orchard_maturity_pipeline.py
+│   ├── padded_diagnostic.py
+│   └── pipeline.py
+│
+├── test_images/
+│
+├── data.yaml
+├── .gitignore
+├── .gitattributes
 └── README.md
 ```
 
-## Getting Started
+The datasets, virtual environment, generated result files, and intermediate dataset directories are intentionally excluded from the repository.
 
-```bash
-git clone https://github.com/tanishqkumargupta/Apple-Detection-Capstone.git
-cd Apple-Detection-Capstone
-pip install ultralytics torch torchvision scikit-learn matplotlib seaborn
+## Datasets
+
+### 1. MinneApple
+
+**Role:** Apple detection · Apple counting
+
+The original MinneApple instance masks were converted into single-class YOLO-compatible bounding-box annotations.
+
+| Split | Images |
+|---|---|
+| Training | 536 |
+| Validation | 134 |
+| **Total** | **670** |
+
+The detection task contains one class: `apple`. The validation split contains 5,660 annotated apple instances.
+
+### 2. Fruit Ripeness Dataset
+
+**Role:** Raw/Ripe/Rotten apple classification · ResNet50 vs. EfficientNet-B0 comparison
+
+Only apple images from the public fruit-ripeness dataset were used. The original categories were mapped as follows:
+
+| Original Category | Project Class |
+|---|---|
+| Unripe apple | Raw |
+| Fresh apples | Ripe |
+| Rotten apples | Rotten |
+
+Dataset distribution:
+
+| Class | Total |
+|---|---|
+| Raw | 2,305 |
+| Ripe | 2,088 |
+| Rotten | 2,943 |
+| **Total** | **7,336** |
+
+| Split | Images |
+|---|---|
+| Training | 4,777 |
+| Validation | 1,192 |
+| Test | 1,367 |
+
+The ripeness dataset primarily contains fruit-level images rather than apples embedded in orchard scenes.
+
+### 3. Multi-Stage Apple Dataset
+
+**Role:** Orchard maturity classification · Cross-domain detection evaluation
+
+The dataset provides pixel-level annotations for three orchard maturity categories: Immature, Semi-mature, Mature. After excluding one annotation with an unresolved class label, 2,574 valid apple instances were used.
+
+| Split | Valid Apple Instances |
+|---|---|
+| Training | 1,981 |
+| Validation | 185 |
+| Test | 408 |
+| **Total** | **2,574** |
+
+This dataset is independently collected from MinneApple and differs in orchard layout and image acquisition conditions, making it suitable for the supporting cross-domain evaluation.
+
+## Models
+
+### YOLO11n — Apple Detection
+
+| Configuration | Value |
+|---|---|
+| Model | YOLO11n |
+| Input size | 640 × 640 |
+| Classes | 1 |
+| Epochs | 50 |
+| Batch size | 16 |
+| Hardware | NVIDIA Tesla T4 |
+| Detection class | Apple |
+
+Checkpoint: `models/apple_detection_best.pt`
+
+The detector uses a confidence threshold of 0.25 for retained detections.
+
+### ResNet50 — Raw/Ripe/Rotten Classification
+
+| Configuration | Value |
+|---|---|
+| Model | ResNet50 |
+| Input size | 224 × 224 |
+| Classes | 3 |
+| Epochs | 20 |
+| Batch size | 32 |
+| Optimizer | AdamW |
+| Learning rate | 0.0001 |
+| Weight decay | 0.0001 |
+| Loss | Cross-Entropy |
+
+Classes: Raw · Ripe · Rotten
+
+Checkpoint: `models/resnet50_best.pth`
+
+### EfficientNet-B0 — Comparison Model
+
+Trained under matched conditions (same input size, epochs, batch size, optimizer, learning rate, weight decay, loss) on the same ripeness dataset.
+
+Checkpoint: `models/efficientnet_b0_best.pth`
+
+### ResNet50 — Orchard Maturity Classification
+
+A separate ImageNet-pretrained ResNet50 was trained **independently** for: Immature · Semi-mature · Mature.
+
+Checkpoint: `models/orchard_maturity_resnet50_best.pth`
+
+This classifier is not the same model as the raw/ripe/rotten classifier.
+
+## Experimental Results
+
+### Apple Detection
+
+YOLO11n evaluation on the 134-image MinneApple validation split:
+
+| Metric | Result |
+|---|---|
+| Precision | 84.8% |
+| Recall | 75.7% |
+| mAP@50 | 84.7% |
+| mAP@50–95 | 42.2% |
+
+### Apple Counting
+
+Counting is derived directly from the detections produced by YOLO11n.
+
+| Metric | Result |
+|---|---|
+| Evaluation images | 134 |
+| Ground-truth apples | 5,660 |
+| Predicted apples | 5,901 |
+| MAE | 4.5448 |
+| RMSE | 6.4779 |
+| Counting accuracy | 89.24% |
+
+The reported counting accuracy uses the normalized error formulation:
+
+```
+CountAcc = (1 - MAE / mean ground-truth count) × 100
 ```
 
-The notebook (`Capstone.ipynb`) was developed on Google Colab with a Tesla T4 GPU and walks through:
-1. Environment setup
-2. Dataset preparation (MinneApple → YOLO format; ripeness dataset; Multi-Stage polygon → bbox conversion)
-3. YOLO11n training and evaluation
-4. Apple counting from detections
-5. ResNet50 / EfficientNet-B0 ripeness classifier training and comparison
-6. Orchard maturity classifier training
-7. Cross-domain detection evaluation
-8. Crop extraction and qualitative end-to-end demo
+### Raw/Ripe/Rotten Classification
+
+**ResNet50**
+
+| Metric | Result |
+|---|---|
+| Accuracy | 99.93% |
+| Macro Precision | 99.94% |
+| Macro Recall | 99.92% |
+| Macro F1 | 99.93% |
+
+**EfficientNet-B0**
+
+| Metric | Result |
+|---|---|
+| Accuracy | 99.93% |
+| Macro Precision | 99.91% |
+| Macro Recall | 99.92% |
+| Macro F1 | 99.91% |
+
+The two models produced near-identical test accuracy on this dataset. ResNet50 was retained for the downstream qualitative detection-to-ripeness pipeline because it achieved marginally higher macro precision and macro F1. No statistical significance test was performed on this difference.
+
+### Orchard Maturity Classification
+
+| Metric | Result |
+|---|---|
+| Accuracy | 88.48% |
+| Macro Precision | 89.51% |
+| Macro Recall | 88.45% |
+| Macro F1 | 88.18% |
+
+The semi-mature category was the most difficult class, particularly because it represents an intermediate visual transition between immature and mature apples.
+
+### Cross-Domain Detection
+
+The YOLO11n detector trained on MinneApple was applied directly to the Multi-Stage dataset **without retraining or fine-tuning**.
+
+| Metric | Result |
+|---|---|
+| Test images | 239 |
+| Ground-truth apples | 408 |
+| Predicted apples | 240 |
+| True positives | 5 |
+| False positives | 235 |
+| False negatives | 403 |
+| Precision | 2.08% |
+| Recall | 1.23% |
+| F1-score | 1.54% |
+
+This experiment is treated as an exploratory cross-domain transfer evaluation rather than as the primary YOLO11n benchmark.
+
+### End-to-End Demonstration
+
+```
+Input Image
+    │
+    ▼
+YOLO11n Detection
+    │
+    ├──────────────► Apple Count
+    │
+    ▼
+Apple Crop Extraction
+    │
+    ▼
+224 × 224 Resize + Normalization
+    │
+    ▼
+ResNet50 Ripeness Classification
+    │
+    ▼
+Raw / Ripe / Rotten
+```
+
+On a representative MinneApple orchard image:
+
+```
+Detected apples: 101
+Raw:             101
+Ripe:              0
+Rotten:            0
+```
+
+This demonstrates that the independently trained models can be connected into a working inference pipeline. It is a **qualitative** demonstration and is **not** an end-to-end accuracy measurement — the detection and ripeness models were trained on different datasets, and the study does not contain ground-truth raw/ripe/rotten labels for the individual apples detected in the MinneApple orchard images.
 
 ## Limitations
 
-- **Dataset-domain mismatch**: the ripeness dataset is fruit-level (close-up) imagery, while MinneApple is in-orchard imagery — the 99.93% ripeness figure characterizes fruit-level classification, not in-orchard ripeness assessment.
-- **No quantitative end-to-end benchmark**: no dataset provides both apple-detection annotations and ripeness labels for the same images.
-- **Severe cross-domain degradation**: the detector does not transfer between the two orchard-imagery sources without retraining or domain adaptation.
-- **No deployment/efficiency measurements**: inference speed, model size trade-offs, and field/real-time performance were not measured.
+The primary limitation identified during experimentation is **domain shift**. The detection model is trained on orchard imagery, whereas the raw/ripe/rotten classifier is trained primarily on fruit-level images — the 99.93% fruit-level classification accuracy should not be interpreted as equivalent to orchard-wide ripeness classification accuracy. The cross-domain experiment further demonstrates that strong in-domain detection performance does not necessarily transfer to another orchard dataset.
 
-See the paper's Section 7 for the full list.
+Additional limitations include:
+
+- Small and partially occluded apples
+- Dense foliage and background clutter
+- Variable illumination
+- Differences in image acquisition conditions
+- Differences between fruit-level and orchard-level imagery
+- Separate label spaces for ripeness and orchard maturity
+- Lack of a common dataset containing orchard detection annotations and reliable raw/ripe/rotten labels for the same apple instances
+- No quantitative end-to-end ripeness accuracy
+- No inference-speed or real-time deployment measurements
 
 ## Future Work
 
-- Fine-tune/retrain the detector on target-orchard imagery
-- Explore domain-adaptation techniques (e.g., CycleGAN-based approaches) to reduce the cross-domain gap
-- Build a unified dataset with both orchard-scene detection and per-apple ripeness labels for genuine end-to-end evaluation
-- Higher-resolution / multi-scale detection for small and occluded apples
-- Benchmark additional lightweight architectures for edge deployment
-- Evaluate across more orchards, cultivars, viewpoints, and lighting conditions
-- Joint/multi-task training in place of the sequential detect-then-classify pipeline
+- Training an orchard-specific detector
+- Domain adaptation between orchard datasets
+- Development of a unified orchard raw/ripe/rotten dataset
+- Improved small-object detection
+- Lightweight model optimization
+- Larger multi-orchard evaluation
+- Quantitative end-to-end evaluation on a unified dataset
+- Real-time edge deployment
 
-## Citation
+## Technologies
 
-If you use this work, please cite:
+- Python
+- PyTorch
+- Torchvision
+- Ultralytics YOLO
+- YOLO11n
+- ResNet50
+- EfficientNet-B0
+- OpenCV
+- NumPy
+- scikit-learn
+- Matplotlib
+- Pillow
 
+## Repository Usage
+
+The repository contains trained checkpoints and implementation code. The scripts below depend on the corresponding datasets and local paths used during experimentation — the original datasets are not distributed with this repository.
+
+**Detection**
+```bash
+python src/detection.py
 ```
-Patel, R.K., Gupta, T.K., Patil, S.U., Parmar, S., Agrawal, R., Pathak, V.S.
-A Modular Deep Learning Framework for Apple Detection and Ripeness Classification,
-with Supporting Counting and Cross-Domain Generalization Evaluations.
+
+**Raw/Ripe/Rotten Classification**
+```bash
+python src/classification.py
 ```
+
+**End-to-End Detection + Classification**
+```bash
+python src/pipeline.py
+```
+
+**Classification Evaluation**
+```bash
+python src/classification_evaluation.py
+```
+
+**Orchard Maturity Pipeline**
+```bash
+python src/orchard_maturity_pipeline.py
+```
+
+**Orchard Maturity Evaluation**
+```bash
+python scripts/evaluate_orchard_maturity.py
+```
+
+**Cross-Domain Detection Evaluation**
+```bash
+python src/evaluate_orchard_detection.py
+```
+
+## Trained Checkpoints
+
+| Task | Checkpoint |
+|---|---|
+| Apple detection | `models/apple_detection_best.pt` |
+| Apple detection — last checkpoint | `models/apple_detection_last.pt` |
+| Raw/Ripe/Rotten classification | `models/resnet50_best.pth` |
+| Raw/Ripe/Rotten — last checkpoint | `models/resnet50_last.pth` |
+| EfficientNet comparison | `models/efficientnet_b0_best.pth` |
+| Orchard maturity classification | `models/orchard_maturity_resnet50_best.pth` |
+| Orchard maturity — last checkpoint | `models/orchard_maturity_resnet50_last.pth` |
+
+Model checkpoints are stored using **Git Large File Storage (Git LFS)** where required.
+
+## Research Basis
+
+The project was developed with reference to research in agricultural computer vision, particularly work involving deep-learning-based agricultural image classification and YOLO-based fruit detection.
+
+**Primary Reference Studies**
+
+Attri, I., Awasthi, L. K., & Sharma, T. P. (2026). *DeepWave Feature Extractor (DW-FE): An Approach to Image Feature Extraction Combining Wavelet Transformation and Deep Learning for Mango and Apple Leaf Disease Classification.* Applied Fruit Science, 68, 298. DOI: [10.1007/s10341-026-02009-6](https://doi.org/10.1007/s10341-026-02009-6)
+
+Chouhan, S. S., Saxena, E., Shukla, A., Patel, R. K., & Singh, U. P. (2025). *Optimizing YOLO-Based Models for Real-Time Guava Detection with Probabilistic Fused Wiener Filter-Enhanced Feature Fusion.* Applied Fruit Science, 67, 383. DOI: [10.1007/s10341-025-01613-2](https://doi.org/10.1007/s10341-025-01613-2)
+
+The DW-FE and PFWF architectures from these studies were **not** implemented in this project — they were used as research and methodological references.
 
 ## Data Availability
 
@@ -150,6 +474,24 @@ with Supporting Counting and Cross-Domain Generalization Evaluations.
 - Fruit Ripeness (Unripe, Ripe, Rotten): Kaggle
 - Multi-Stage Pixel-Level Annotated Apple Dataset: Mendeley Data, DOI [10.17632/gfcmdbvw65.4](https://doi.org/10.17632/gfcmdbvw65.4)
 
-## License / Funding / Conflicts
+## Project Status
+
+**Status:** Completed Experimental Prototype
+
+Implemented components:
+
+- [x] Apple detection
+- [x] Apple counting
+- [x] Raw/Ripe/Rotten classification
+- [x] ResNet50 vs. EfficientNet-B0 comparison
+- [x] Orchard maturity classification
+- [x] Cross-domain detection evaluation
+- [x] End-to-end inference demonstration
+- [x] Trained model checkpoints
+- [x] Quantitative evaluation
+- [x] Classification confusion matrices generated during experimentation
+- [x] Research manuscript and experimental documentation maintained separately
+
+## Funding / Conflicts of Interest
 
 The authors received no financial support for this research. No competing interests are declared. This study used only publicly available image datasets and did not involve human participants, animals, or identifiable personal data.
