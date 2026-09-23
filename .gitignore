@@ -1,0 +1,18 @@
+@"
+.venv/
+__pycache__/
+*.pyc
+
+apple_ripeness/
+dataset/
+minneapple/
+orchard_maturity/
+results/
+visualized/
+
+apple_ripeness.zip
+
+.idea/
+.vscode/
+*.ipynb_checkpoints/
+"@ | Set-Content .gitignore
